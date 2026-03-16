@@ -85,9 +85,13 @@ class HOptimusLoRA(nn.Module):
 
         # Load pre-trained encoder (requires HF token & model access)
         config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
-        config.image_size = target_size
+        # Override image size to match checkpoint positional embeddings
+        for attr in ("image_size", "img_size", "input_size"):
+            if hasattr(config, attr):
+                setattr(config, attr, target_size)
         encoder = AutoModel.from_pretrained(
-            model_name, config=config, trust_remote_code=True
+            model_name, config=config, trust_remote_code=True,
+            ignore_mismatched_sizes=True,
         )
 
         # Store architecture constants before PEFT wrapping
