@@ -14,4 +14,4 @@ export HF_HOME=/beegfs/data/work/imvia/in156281/H-optimus-0-valis-lora/hf_cache
 export HF_TOKEN=$(cat ~/.hf_token)
 cd $WORKDIR/H-optimus-0-valis-lora
 
-python train.py --data_dir dataset --output_dir checkpoints --epochs 1 --batch_size 2 --num_workers 0
+python train.py --data_dir dataset --output_dir checkpoints --epochs 50 --batch_size 8 --num_workers 2
