@@ -229,7 +229,7 @@ def main():
     )
 
     # --- Model ------------------------------------------------------------
-    print("Building model …")
+    print("Building model...")
     model = HOptimusLoRA(
         model_name=args.model_name,
         lora_r=args.lora_r,
