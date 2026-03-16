@@ -1,5 +1,3 @@
-"""Training script — LoRA fine-tuning of H-optimus-0 for HES → CD30 virtual staining."""
-
 import argparse
 import os
 import random
@@ -16,11 +14,6 @@ from transformers import AutoImageProcessor
 from dataset import VirtualStainingDataset
 from model import HOptimusLoRA
 
-
-# ---------------------------------------------------------------------------
-# SSIM computation
-# ---------------------------------------------------------------------------
-
 def _gaussian_kernel_2d(size: int, sigma: float, channels: int) -> torch.Tensor:
     coords = torch.arange(size, dtype=torch.float32) - size // 2
     g = torch.exp(-coords.pow(2) / (2 * sigma ** 2))
@@ -35,7 +28,6 @@ def compute_ssim(
     window_size: int = 11,
     sigma: float = 1.5,
 ) -> torch.Tensor:
-    """Mean SSIM between two image batches (values in [0, 1])."""
     C1, C2 = 0.01 ** 2, 0.03 ** 2
     channels = pred.shape[1]
     kernel = _gaussian_kernel_2d(window_size, sigma, channels).to(
@@ -59,7 +51,6 @@ def compute_ssim(
 
 
 class CombinedLoss(nn.Module):
-    """MSE + weighted SSIM loss."""
 
     def __init__(self, ssim_weight: float = 1.0):
         super().__init__()
@@ -71,11 +62,6 @@ class CombinedLoss(nn.Module):
         ssim_val = 1.0 - compute_ssim(pred, target)
         total = mse_val + self.ssim_weight * ssim_val
         return total, mse_val, ssim_val
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 def seed_everything(seed: int):
     random.seed(seed)
@@ -107,10 +93,6 @@ def load_checkpoint(path, model, optimizer=None, scaler=None, device="cpu"):
         scaler.load_state_dict(ckpt["scaler_state_dict"])
     return ckpt.get("epoch", 0), ckpt.get("val_loss", float("inf"))
 
-
-# ---------------------------------------------------------------------------
-# Train / Validate one epoch
-# ---------------------------------------------------------------------------
 
 def train_one_epoch(model, loader, criterion, optimizer, scaler, device, use_amp):
     model.train()
@@ -157,10 +139,6 @@ def validate(model, loader, criterion, device, use_amp):
     n = len(loader.dataset)
     return running_loss / n, running_mse / n, running_ssim / n
 
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 
 def parse_args():
     p = argparse.ArgumentParser(description="Fine-tune H-optimus-0 with LoRA")

@@ -1,5 +1,3 @@
-"""H-optimus-0 encoder with LoRA adaptation and convolutional decoder."""
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -12,7 +10,6 @@ from transformers import AutoModel
 # ---------------------------------------------------------------------------
 
 class UpsampleBlock(nn.Module):
-    """Bilinear ×2 upsample followed by two 3×3 convolutions."""
 
     def __init__(self, in_channels: int, out_channels: int):
         super().__init__()
@@ -31,14 +28,6 @@ class UpsampleBlock(nn.Module):
 
 
 class ConvDecoder(nn.Module):
-    """Progressive upsampling decoder: patch embeddings → RGB image.
-
-    Applies a 1×1 projection then 4 × bilinear-upsample blocks
-    (each doubling spatial resolution), finishing with a bilinear
-    interpolation to *target_size* and a 1×1 head with sigmoid output.
-
-    Channel progression: embed_dim → 512 → 256 → 128 → 64 → 32 → 3
-    """
 
     def __init__(self, embed_dim: int = 1024, target_size: int = 224):
         super().__init__()
@@ -65,12 +54,7 @@ class ConvDecoder(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            x: (B, embed_dim, H_grid, W_grid) spatial patch embeddings.
-        Returns:
-            (B, 3, target_size, target_size) predicted image in [0, 1].
-        """
+
         x = self.proj(x)
         for block in self.blocks:
             x = block(x)
@@ -88,23 +72,6 @@ class ConvDecoder(nn.Module):
 # ---------------------------------------------------------------------------
 
 class HOptimusLoRA(nn.Module):
-    """H-optimus-0 ViT encoder + LoRA adaptation + convolutional decoder.
-
-    1. Loads the pre-trained bioptimus/H-optimus-0 backbone.
-    2. Freezes all encoder weights.
-    3. Injects LoRA adapters on attention query/value projections.
-    4. Attaches a lightweight ``ConvDecoder`` to reconstruct an RGB image
-       from the encoder's patch embeddings.
-
-    Only LoRA adapters and decoder parameters are trainable.
-
-    Args:
-        model_name: HuggingFace model identifier.
-        lora_r: LoRA rank.
-        lora_alpha: LoRA scaling factor.
-        lora_dropout: Dropout applied inside LoRA layers.
-        target_size: Output image spatial resolution.
-    """
 
     def __init__(
         self,
@@ -142,15 +109,7 @@ class HOptimusLoRA(nn.Module):
         # Decoder
         self.decoder = ConvDecoder(embed_dim=self.embed_dim, target_size=target_size)
 
-    # ------------------------------------------------------------------
-
     def forward(self, pixel_values: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            pixel_values: (B, 3, H, W) normalised input images.
-        Returns:
-            (B, 3, target_size, target_size) predicted image in [0, 1].
-        """
         # Encode
         outputs = self.encoder(pixel_values=pixel_values)
         hidden_states = outputs.last_hidden_state  # (B, seq_len, D)
@@ -169,13 +128,8 @@ class HOptimusLoRA(nn.Module):
         )
 
         return self.decoder(spatial)
-
-    # ------------------------------------------------------------------
-    # Checkpoint helpers
-    # ------------------------------------------------------------------
-
+    
     def get_trainable_state_dict(self) -> dict:
-        """Return state dict with only trainable params + decoder buffers."""
         state = {}
         for name, param in self.named_parameters():
             if param.requires_grad:
@@ -186,5 +140,4 @@ class HOptimusLoRA(nn.Module):
         return state
 
     def load_trainable_state_dict(self, state_dict: dict) -> None:
-        """Load a checkpoint produced by ``get_trainable_state_dict``."""
         self.load_state_dict(state_dict, strict=False)

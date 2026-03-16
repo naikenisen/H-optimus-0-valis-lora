@@ -1,4 +1,4 @@
-"""Inference script — predict CD30 from HES patches using a trained checkpoint."""
+
 
 import argparse
 from pathlib import Path
@@ -13,7 +13,7 @@ from model import HOptimusLoRA
 
 
 def preprocess(image_bgr: np.ndarray, image_size: int, mean, std) -> torch.Tensor:
-    """Resize, normalise and convert a single BGR image to a model-ready tensor."""
+
     img = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
     img = cv2.resize(img, (image_size, image_size))
     img = img.astype(np.float32) / 255.0
@@ -22,7 +22,7 @@ def preprocess(image_bgr: np.ndarray, image_size: int, mean, std) -> torch.Tenso
 
 
 def postprocess(tensor: torch.Tensor, original_size: tuple) -> np.ndarray:
-    """Convert model output tensor back to a BGR uint8 image at *original_size*."""
+
     img = tensor.squeeze(0).cpu().permute(1, 2, 0).numpy()  # (H, W, 3) in [0, 1]
     img = (img * 255.0).clip(0, 255).astype(np.uint8)
     h, w = original_size

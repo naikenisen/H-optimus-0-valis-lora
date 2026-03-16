@@ -1,5 +1,3 @@
-"""Dataset for paired HES → CD30 virtual staining."""
-
 import os
 from pathlib import Path
 
@@ -15,20 +13,7 @@ IMAGENET_STD = (0.229, 0.224, 0.225)
 
 
 class VirtualStainingDataset(Dataset):
-    """PyTorch Dataset for paired HES/CD30 patches.
 
-    Loads pairs of (HES, CD30) images matched by filename.
-    Applies coherent spatial augmentations to both images,
-    and optional color augmentations to the HES input only.
-
-    Args:
-        root_dir: Root directory containing split folders.
-        split: One of 'train', 'valid', 'test'.
-        image_size: Target spatial resolution for both inputs and targets.
-        mean: Per-channel mean for input (HES) normalisation.
-        std: Per-channel std for input (HES) normalisation.
-        augment: Whether to apply data augmentation (disable for valid/test).
-    """
 
     def __init__(
         self,
