@@ -113,6 +113,18 @@ class HOptimusLoRA(nn.Module):
             ignore_mismatched_sizes=True,
         )
 
+        # Timm-backed models can enforce a fixed encoder input size (e.g. 518).
+        # Keep decoder/output size independent from encoder size.
+        self.encoder_input_size = None
+        timm_model = getattr(encoder, "timm_model", None)
+        patch_embed = getattr(timm_model, "patch_embed", None) if timm_model is not None else None
+        if patch_embed is not None and hasattr(patch_embed, "img_size"):
+            img_size = patch_embed.img_size
+            if isinstance(img_size, tuple):
+                self.encoder_input_size = int(img_size[0])
+            else:
+                self.encoder_input_size = int(img_size)
+
         # Store architecture constants before PEFT wrapping
         self.embed_dim = getattr(encoder.config, "hidden_size", 1024)
         self.patch_size = getattr(encoder.config, "patch_size", 14)
@@ -139,12 +151,21 @@ class HOptimusLoRA(nn.Module):
         self.decoder = ConvDecoder(embed_dim=self.embed_dim, target_size=target_size)
 
     def forward(self, pixel_values: torch.Tensor) -> torch.Tensor:
+        if self.encoder_input_size is not None and pixel_values.shape[-1] != self.encoder_input_size:
+            pixel_values = F.interpolate(
+                pixel_values,
+                size=(self.encoder_input_size, self.encoder_input_size),
+                mode="bilinear",
+                align_corners=False,
+            )
+
         # Encode
         outputs = self.encoder(pixel_values=pixel_values)
         hidden_states = outputs.last_hidden_state  # (B, seq_len, D)
 
         # Number of spatial patch tokens (handles CLS + optional register tokens)
-        grid_size = pixel_values.shape[-1] // self.patch_size
+        num_patches = hidden_states.shape[1]
+        grid_size = int(num_patches ** 0.5)
         num_patches = grid_size * grid_size
         patch_tokens = hidden_states[:, -num_patches:, :]  # (B, N, D)
 
