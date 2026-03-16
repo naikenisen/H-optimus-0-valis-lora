@@ -5,6 +5,25 @@ from peft import LoraConfig, get_peft_model
 from transformers import AutoConfig, AutoModel
 
 
+def _infer_lora_targets(model: nn.Module) -> list[str]:
+    """Find attention projection module suffixes compatible with PEFT LoRA."""
+    linear_suffixes = {name.rsplit(".", 1)[-1] for name, module in model.named_modules() if isinstance(module, nn.Linear)}
+    preferred = ["q_proj", "v_proj", "query", "value", "qkv"]
+    targets = [name for name in preferred if name in linear_suffixes]
+    if targets:
+        return targets
+
+    # Fallback for timm-style ViT blocks where qkv/proj are common names.
+    fallback = [name for name in ("qkv", "proj") if name in linear_suffixes]
+    if fallback:
+        return fallback
+
+    raise ValueError(
+        "Could not infer LoRA target modules from encoder. "
+        f"Detected linear suffixes: {sorted(linear_suffixes)}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Decoder blocks
 # ---------------------------------------------------------------------------
@@ -104,11 +123,13 @@ class HOptimusLoRA(nn.Module):
             param.requires_grad = False
 
         # Apply LoRA on attention projections
+        target_modules = _infer_lora_targets(encoder)
+        print(f"LoRA target modules: {target_modules}")
         lora_config = LoraConfig(
             r=lora_r,
             lora_alpha=lora_alpha,
             lora_dropout=lora_dropout,
-            target_modules=["query", "value"],
+            target_modules=target_modules,
             bias="none",
         )
         self.encoder = get_peft_model(encoder, lora_config)
