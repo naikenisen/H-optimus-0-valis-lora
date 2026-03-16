@@ -187,7 +187,7 @@ def main():
         )
         image_mean = tuple(processor.image_mean)
         image_std = tuple(processor.image_std)
-        print(f"Processor normalisation — mean: {image_mean}, std: {image_std}")
+        print(f"Processor normalisation -- mean: {image_mean}, std: {image_std}")
     except Exception:
         image_mean = (0.485, 0.456, 0.406)
         image_std = (0.229, 0.224, 0.225)
@@ -285,8 +285,8 @@ def main():
 
         elapsed = time.time() - t0
         print(
-            f"  train — loss: {train_loss:.5f}  mse: {train_mse:.5f}  ssim: {train_ssim:.5f}\n"
-            f"  valid — loss: {val_loss:.5f}  mse: {val_mse:.5f}  ssim: {val_ssim:.5f}  "
+            f"  train -- loss: {train_loss:.5f}  mse: {train_mse:.5f}  ssim: {train_ssim:.5f}\n"
+            f"  valid -- loss: {val_loss:.5f}  mse: {val_mse:.5f}  ssim: {val_ssim:.5f}  "
             f"({elapsed:.0f}s)"
         )
 
@@ -303,7 +303,7 @@ def main():
                 model, optimizer, scaler, epoch + 1, val_loss, config,
                 os.path.join(args.output_dir, "best.pt"),
             )
-            print(f"  ★ New best model saved (val_loss={val_loss:.5f})")
+            print(f"  * New best model saved (val_loss={val_loss:.5f})")
 
     print(f"\nTraining finished. Best validation loss: {best_val_loss:.5f}")
 

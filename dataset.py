@@ -76,7 +76,7 @@ class VirtualStainingDataset(Dataset):
     def __getitem__(self, idx: int):
         fname = self.filenames[idx]
 
-        # Load images (OpenCV reads BGR → convert to RGB)
+        # Load images (OpenCV reads BGR -> convert to RGB)
         hes = cv2.imread(str(self.hes_dir / fname))
         hes = cv2.cvtColor(hes, cv2.COLOR_BGR2RGB)
 
@@ -92,14 +92,14 @@ class VirtualStainingDataset(Dataset):
         if self.color_transform is not None:
             hes = self.color_transform(image=hes)["image"]
 
-        # uint8 → float32 [0, 1]
+        # uint8 -> float32 [0, 1]
         hes = hes.astype(np.float32) / 255.0
         cd30 = cd30.astype(np.float32) / 255.0
 
         # Normalise HES with encoder-specific statistics
         hes = (hes - self.mean) / self.std
 
-        # (H, W, C) → (C, H, W) tensors
+        # (H, W, C) -> (C, H, W) tensors
         hes = torch.from_numpy(hes).permute(2, 0, 1).contiguous()
         cd30 = torch.from_numpy(cd30).permute(2, 0, 1).contiguous()
 

@@ -32,7 +32,7 @@ def postprocess(tensor: torch.Tensor, original_size: tuple) -> np.ndarray:
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description="HES → CD30 inference")
+    p = argparse.ArgumentParser(description="HES -> CD30 inference")
     p.add_argument("--checkpoint", required=True, help="Path to .pt checkpoint")
     p.add_argument(
         "--input",
@@ -83,7 +83,7 @@ def main():
             std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
     # --- Build and load model ---------------------------------------------
-    print("Loading model …")
+    print("Loading model...")
     model = HOptimusLoRA(
         model_name=model_name,
         lora_r=lora_r,
@@ -114,7 +114,7 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # --- Run inference ----------------------------------------------------
-    print(f"Processing {len(image_paths)} image(s) → {output_dir}/")
+    print(f"Processing {len(image_paths)} image(s) -> {output_dir}/")
     for img_path in tqdm(image_paths):
         img_bgr = cv2.imread(str(img_path))
         if img_bgr is None:
