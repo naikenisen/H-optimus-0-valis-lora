@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from peft import LoraConfig, get_peft_model
-from transformers import AutoModel
+from transformers import AutoConfig, AutoModel
 
 
 # ---------------------------------------------------------------------------
@@ -84,7 +84,11 @@ class HOptimusLoRA(nn.Module):
         super().__init__()
 
         # Load pre-trained encoder (requires HF token & model access)
-        encoder = AutoModel.from_pretrained(model_name, trust_remote_code=True)
+        config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
+        config.image_size = target_size
+        encoder = AutoModel.from_pretrained(
+            model_name, config=config, trust_remote_code=True
+        )
 
         # Store architecture constants before PEFT wrapping
         self.embed_dim = getattr(encoder.config, "hidden_size", 1024)

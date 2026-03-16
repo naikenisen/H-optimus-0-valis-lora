@@ -9,3 +9,4 @@ opencv-python-headless>=4.7
 tqdm
 huggingface-hub
 timm
+requests
