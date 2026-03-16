@@ -126,7 +126,14 @@ class HOptimusLoRA(nn.Module):
                 self.encoder_input_size = int(img_size)
 
         # Store architecture constants before PEFT wrapping
-        self.embed_dim = getattr(encoder.config, "hidden_size", 1024)
+        timm_model = getattr(encoder, "timm_model", None)
+        self.embed_dim = (
+            getattr(encoder.config, "hidden_size", None)
+            or getattr(encoder.config, "embed_dim", None)
+            or getattr(timm_model, "num_features", None)
+            or getattr(timm_model, "embed_dim", None)
+            or 1024
+        )
         self.patch_size = getattr(encoder.config, "patch_size", 14)
         self.target_size = target_size
 
