@@ -1,0 +1,10 @@
+torch>=2.0
+torchvision>=0.15
+transformers>=4.36
+peft>=0.7
+albumentations>=1.3
+Pillow>=9.0
+numpy>=1.24
+opencv-python-headless>=4.7
+tqdm
+huggingface-cli
