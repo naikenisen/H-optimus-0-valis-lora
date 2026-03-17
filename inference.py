@@ -1,6 +1,7 @@
 
 
 import argparse
+import contextlib
 from pathlib import Path
 
 import cv2
@@ -45,7 +46,22 @@ def parse_args():
     p.add_argument("--lora_r", type=int, default=None, help="Override LoRA rank")
     p.add_argument("--lora_alpha", type=int, default=None, help="Override LoRA alpha")
     p.add_argument("--device", default=None, help="Force device (cuda / cpu)")
+    p.add_argument("--amp", action="store_true", default=False, help="Enable mixed precision on CUDA")
+    p.add_argument("--no_amp", dest="amp", action="store_false")
+    p.add_argument(
+        "--amp_dtype",
+        type=str,
+        default="auto",
+        choices=["auto", "bf16", "fp16"],
+        help="AMP dtype on CUDA (auto prefers bf16 when available)",
+    )
     return p.parse_args()
+
+
+def _autocast_ctx(device: torch.device, use_amp: bool, amp_dtype: torch.dtype):
+    if device.type == "cuda":
+        return torch.amp.autocast(device_type="cuda", enabled=use_amp, dtype=amp_dtype)
+    return contextlib.nullcontext()
 
 
 def main():
@@ -55,6 +71,20 @@ def main():
         args.device
         if args.device
         else ("cuda" if torch.cuda.is_available() else "cpu")
+    )
+
+    use_amp = args.amp and device.type == "cuda"
+    amp_dtype = torch.float16
+    if device.type == "cuda":
+        if args.amp_dtype == "auto":
+            amp_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        elif args.amp_dtype == "bf16":
+            amp_dtype = torch.bfloat16
+        else:
+            amp_dtype = torch.float16
+    print(
+        f"Device: {device} | AMP: {use_amp} | "
+        f"AMP dtype: {str(amp_dtype).replace('torch.', '')}"
     )
 
     # --- Load checkpoint config -------------------------------------------
@@ -115,6 +145,7 @@ def main():
 
     # --- Run inference ----------------------------------------------------
     print(f"Processing {len(image_paths)} image(s) -> {output_dir}/")
+    black_like = 0
     for img_path in tqdm(image_paths):
         img_bgr = cv2.imread(str(img_path))
         if img_bgr is None:
@@ -124,11 +155,38 @@ def main():
         original_size = (img_bgr.shape[0], img_bgr.shape[1])
         tensor = preprocess(img_bgr, image_size, mean, std).to(device)
 
-        with torch.no_grad(), torch.amp.autocast("cuda", enabled=device.type == "cuda"):
+        with torch.no_grad(), _autocast_ctx(device, use_amp, amp_dtype):
             pred = model(tensor)
+
+        pred = pred.float()
+        if not torch.isfinite(pred).all():
+            raise RuntimeError(
+                "Non-finite prediction detected (NaN/Inf). "
+                "Checkpoint is likely corrupted or unstable. "
+                "Re-run training with the stable train.py settings."
+            )
+
+        pred = pred.clamp(0.0, 1.0)
+        pred_min = float(pred.min().item())
+        pred_max = float(pred.max().item())
+        pred_mean = float(pred.mean().item())
+        if pred_max < 0.08 and pred_mean < 0.02:
+            black_like += 1
 
         result = postprocess(pred, original_size)
         cv2.imwrite(str(output_dir / img_path.name), result)
+
+    if black_like:
+        print(
+            f"Warning: {black_like}/{len(image_paths)} output(s) look nearly black "
+            "(very low prediction range)."
+        )
+        print(
+            "Likely causes: unstable checkpoint (trained with NaN), or severe underfitting."
+        )
+    print(
+        f"Last prediction stats -- min: {pred_min:.4f}, max: {pred_max:.4f}, mean: {pred_mean:.4f}"
+    )
 
     print("Done.")
 

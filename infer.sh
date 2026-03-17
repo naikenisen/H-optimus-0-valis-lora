@@ -17,4 +17,5 @@ cd $WORKDIR/H-optimus-0-valis-lora
 python inference.py \
 	--checkpoint "checkpoints/last.pt" \
 	--input "dataset/test/HES" \
-	--output_dir "predictions"
+	--output_dir "predictions" \
+	--no_amp
