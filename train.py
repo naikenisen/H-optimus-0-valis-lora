@@ -10,7 +10,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from transformers import AutoImageProcessor
 
 from dataset import VirtualStainingDataset
 from model import HOptimusLoRA
@@ -228,7 +227,7 @@ def parse_args():
     p.add_argument("--output_dir", default="checkpoints", help="Where to save models")
 
     # Model
-    p.add_argument("--model_name", default="bioptimus/H-optimus-0")
+    p.add_argument("--model_name", default="hf-hub:bioptimus/H-optimus-0")
     p.add_argument("--image_size", type=int, default=224)
     p.add_argument("--lora_r", type=int, default=16, help="LoRA rank")
     p.add_argument("--lora_alpha", type=int, default=32, help="LoRA alpha")
@@ -297,18 +296,10 @@ def main():
         f"AMP dtype: {str(amp_dtype).replace('torch.', '')}"
     )
 
-    # --- Image processor (normalization values) ---------------------------
-    try:
-        processor = AutoImageProcessor.from_pretrained(
-            args.model_name, trust_remote_code=True
-        )
-        image_mean = tuple(processor.image_mean)
-        image_std = tuple(processor.image_std)
-        print(f"Processor normalisation -- mean: {image_mean}, std: {image_std}")
-    except Exception:
-        image_mean = (0.485, 0.456, 0.406)
-        image_std = (0.229, 0.224, 0.225)
-        print("Using default ImageNet normalisation")
+    # --- Normalization (official H-optimus-0 values) ----------------------
+    image_mean = (0.707223, 0.578729, 0.703617)
+    image_std = (0.211883, 0.230117, 0.177517)
+    print(f"Normalisation -- mean: {image_mean}, std: {image_std}")
 
     # --- Datasets ---------------------------------------------------------
     train_ds = VirtualStainingDataset(

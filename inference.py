@@ -8,7 +8,6 @@ import cv2
 import numpy as np
 import torch
 from tqdm import tqdm
-from transformers import AutoImageProcessor
 
 from model import HOptimusLoRA
 
@@ -41,7 +40,7 @@ def parse_args():
         help="Path to a single HES image or a directory of images",
     )
     p.add_argument("--output_dir", default="predictions")
-    p.add_argument("--model_name", default="bioptimus/H-optimus-0")
+    p.add_argument("--model_name", default="hf-hub:bioptimus/H-optimus-0")
     p.add_argument("--image_size", type=int, default=None, help="Override image size")
     p.add_argument("--lora_r", type=int, default=None, help="Override LoRA rank")
     p.add_argument("--lora_alpha", type=int, default=None, help="Override LoRA alpha")
@@ -109,15 +108,8 @@ def main():
         mean = np.array(config["image_mean"], dtype=np.float32)
         std = np.array(config["image_std"], dtype=np.float32)
     else:
-        try:
-            processor = AutoImageProcessor.from_pretrained(
-                model_name, trust_remote_code=True
-            )
-            mean = np.array(processor.image_mean, dtype=np.float32)
-            std = np.array(processor.image_std, dtype=np.float32)
-        except Exception:
-            mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-            std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+        mean = np.array([0.707223, 0.578729, 0.703617], dtype=np.float32)
+        std = np.array([0.211883, 0.230117, 0.177517], dtype=np.float32)
 
     # --- Build and load model ---------------------------------------------
     print("Loading model...")
