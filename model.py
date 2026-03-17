@@ -98,39 +98,51 @@ class HOptimusLoRA(nn.Module):
         lora_r: int = 16,
         lora_alpha: int = 32,
         lora_dropout: float = 0.05,
-        target_size: int = 224,
+        target_size: int = 518,
     ):
         super().__init__()
 
-        # Load the pre-trained encoder at its native resolution so pretrained
-        # positional embeddings are restored instead of being reinitialized.
+        # 1. Load native config (224) so pretrained weights restore cleanly.
         config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
+        if hasattr(config, "image_size"):
+            config.image_size = 224
+
         encoder = AutoModel.from_pretrained(
             model_name, config=config, trust_remote_code=True,
         )
 
-        # Timm-backed models can enforce a fixed encoder input size (e.g. 518).
-        # Keep decoder/output size independent from encoder size.
-        self.encoder_input_size = None
-        timm_model = getattr(encoder, "timm_model", None)
-        patch_embed = getattr(timm_model, "patch_embed", None) if timm_model is not None else None
-        if patch_embed is not None and hasattr(patch_embed, "img_size"):
-            img_size = patch_embed.img_size
-            if isinstance(img_size, tuple):
-                self.encoder_input_size = int(img_size[0])
-            else:
-                self.encoder_input_size = int(img_size)
+        self.patch_size = getattr(config, "patch_size", 14)
+        timm_model = getattr(encoder, "timm_model", encoder)
+
+        # 2. Bicubic interpolation of positional embeddings when changing size.
+        if target_size != 224:
+            old_grid_size = 224 // self.patch_size
+            new_grid_size = target_size // self.patch_size
+
+            if hasattr(timm_model, "pos_embed"):
+                old_pos_embed = timm_model.pos_embed.data
+                embed_dim = old_pos_embed.shape[-1]
+
+                # 1D tokens -> 2D grid -> interpolate -> flatten back to tokens.
+                pos_2d = old_pos_embed.reshape(1, old_grid_size, old_grid_size, embed_dim).permute(0, 3, 1, 2)
+                new_pos_2d = F.interpolate(
+                    pos_2d,
+                    size=(new_grid_size, new_grid_size),
+                    mode="bicubic",
+                    align_corners=False,
+                )
+                new_pos_embed = new_pos_2d.permute(0, 2, 3, 1).reshape(1, new_grid_size * new_grid_size, embed_dim)
+
+                # Replace with resized positional embedding.
+                timm_model.pos_embed = nn.Parameter(new_pos_embed)
+
+                if hasattr(timm_model, "patch_embed"):
+                    timm_model.patch_embed.img_size = (target_size, target_size)
+
+        self.encoder_input_size = target_size
 
         # Store architecture constants before PEFT wrapping
-        timm_model = getattr(encoder, "timm_model", None)
-        self.embed_dim = (
-            getattr(encoder.config, "hidden_size", None)
-            or getattr(encoder.config, "embed_dim", None)
-            or getattr(timm_model, "num_features", None)
-            or getattr(timm_model, "embed_dim", None)
-            or 1024
-        )
-        self.patch_size = getattr(encoder.config, "patch_size", 14)
+        self.embed_dim = getattr(config, "hidden_size", 1536)
         self.target_size = target_size
 
         # Freeze all encoder weights
