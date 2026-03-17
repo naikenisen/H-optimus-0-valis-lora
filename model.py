@@ -155,23 +155,24 @@ class HOptimusLoRA(nn.Module):
     ):
         super().__init__()
 
-        # Force 224x224 encoder grid so pretrained pos_embed (16x16 tokens)
-        # matches the checkpoint during from_pretrained loading.
+        # Force 224x224 encoder grid so pretrained pos_embed (16x16=256 tokens)
+        # matches the checkpoint exactly during from_pretrained loading.
         config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
         for size_attr in ("image_size", "img_size"):
             if hasattr(config, size_attr):
                 setattr(config, size_attr, 224)
+        # TimmWrapperModel passes img_size via timm_model_kwargs, not
+        # config.image_size — this is the override that actually matters.
+        if hasattr(config, "timm_model_kwargs") and isinstance(config.timm_model_kwargs, dict):
+            config.timm_model_kwargs["img_size"] = 224
 
         encoder = AutoModel.from_pretrained(
-            model_name,
-            config=config,
-            trust_remote_code=True,
-            ignore_mismatched_sizes=True,
+            model_name, config=config, trust_remote_code=True,
         )
 
-        # Keep encoder input at 224 regardless of decoder output size.
         self.encoder_input_size = 224
         timm_model = getattr(encoder, "timm_model", None)
+        # Safety net: resize pos_embed if it still doesn't match 224 grid.
         if timm_model is not None:
             _resize_timm_pos_embed(timm_model, target_size=224, patch_size=getattr(config, "patch_size", 14))
 
