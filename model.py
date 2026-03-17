@@ -24,6 +24,59 @@ def _infer_lora_targets(model: nn.Module) -> list[str]:
     )
 
 
+def _resize_timm_pos_embed(timm_model: nn.Module, target_size: int, patch_size: int) -> None:
+    """Resize timm positional embeddings to match a target image grid."""
+    pos_embed = getattr(timm_model, "pos_embed", None)
+    if pos_embed is None or pos_embed.ndim != 3:
+        return
+
+    target_grid = target_size // patch_size
+    target_tokens = target_grid * target_grid
+    cur_tokens = pos_embed.shape[1]
+    embed_dim = pos_embed.shape[-1]
+
+    # Handle both formats: [N] (no prefix token) and [1 + N] (CLS prefix).
+    prefix_tokens = 0
+    spatial_tokens = cur_tokens
+    old_grid = int(spatial_tokens ** 0.5)
+    if old_grid * old_grid != spatial_tokens and cur_tokens > 1:
+        candidate = cur_tokens - 1
+        old_grid = int(candidate ** 0.5)
+        if old_grid * old_grid == candidate:
+            prefix_tokens = 1
+            spatial_tokens = candidate
+
+    if old_grid * old_grid != spatial_tokens:
+        return
+
+    if spatial_tokens == target_tokens:
+        return
+
+    prefix = pos_embed[:, :prefix_tokens, :] if prefix_tokens else None
+    spatial = pos_embed[:, prefix_tokens:, :]
+    pos_2d = spatial.reshape(1, old_grid, old_grid, embed_dim).permute(0, 3, 1, 2)
+    resized_2d = F.interpolate(
+        pos_2d,
+        size=(target_grid, target_grid),
+        mode="bicubic",
+        align_corners=False,
+    )
+    resized = resized_2d.permute(0, 2, 3, 1).reshape(1, target_tokens, embed_dim)
+    if prefix is not None:
+        resized = torch.cat([prefix, resized], dim=1)
+
+    timm_model.pos_embed = nn.Parameter(resized)
+
+    patch_embed = getattr(timm_model, "patch_embed", None)
+    if patch_embed is not None:
+        if hasattr(patch_embed, "img_size"):
+            patch_embed.img_size = (target_size, target_size)
+        if hasattr(patch_embed, "grid_size"):
+            patch_embed.grid_size = (target_grid, target_grid)
+        if hasattr(patch_embed, "num_patches"):
+            patch_embed.num_patches = target_tokens
+
+
 # ---------------------------------------------------------------------------
 # Decoder blocks
 # ---------------------------------------------------------------------------
@@ -110,15 +163,17 @@ class HOptimusLoRA(nn.Module):
                 setattr(config, size_attr, 224)
 
         encoder = AutoModel.from_pretrained(
-            model_name, config=config, trust_remote_code=True,
+            model_name,
+            config=config,
+            trust_remote_code=True,
+            ignore_mismatched_sizes=True,
         )
 
         # Keep encoder input at 224 regardless of decoder output size.
         self.encoder_input_size = 224
         timm_model = getattr(encoder, "timm_model", None)
-        patch_embed = getattr(timm_model, "patch_embed", None) if timm_model is not None else None
-        if patch_embed is not None and hasattr(patch_embed, "img_size"):
-            patch_embed.img_size = (224, 224)
+        if timm_model is not None:
+            _resize_timm_pos_embed(timm_model, target_size=224, patch_size=getattr(config, "patch_size", 14))
 
         # Store architecture constants before PEFT wrapping
         timm_model = getattr(encoder, "timm_model", None)
