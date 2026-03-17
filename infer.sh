@@ -1,8 +1,8 @@
 #!/bin/ksh
 #$ -q gpu
-#$ -o result.out
+#$ -o infer.out
 #$ -j y
-#$ -N ia2hl_foundation
+#$ -N foundation_infer
 #$ -cwd
 
 cd $WORKDIR
