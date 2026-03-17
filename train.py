@@ -119,14 +119,18 @@ def train_one_epoch(
     use_amp,
     amp_dtype,
     max_grad_norm,
+    max_batches,
 ):
     model.train()
     running_loss, running_mse, running_ssim = 0.0, 0.0, 0.0
     seen_samples = 0
     skipped_batches = 0
 
-    pbar = tqdm(loader, desc="  train", leave=False)
-    for hes, cd30, _ in pbar:
+    total_batches = len(loader) if max_batches is None else min(len(loader), max_batches)
+    pbar = tqdm(loader, desc="  train", leave=False, total=total_batches)
+    for batch_idx, (hes, cd30, _) in enumerate(pbar):
+        if max_batches is not None and batch_idx >= max_batches:
+            break
         hes, cd30 = hes.to(device), cd30.to(device)
 
         optimizer.zero_grad(set_to_none=True)
@@ -175,13 +179,18 @@ def train_one_epoch(
 
 
 @torch.no_grad()
-def validate(model, loader, criterion, device, use_amp, amp_dtype):
+def validate(model, loader, criterion, device, use_amp, amp_dtype, max_batches):
     model.eval()
     running_loss, running_mse, running_ssim = 0.0, 0.0, 0.0
     seen_samples = 0
     skipped_batches = 0
 
-    for hes, cd30, _ in tqdm(loader, desc="  valid", leave=False):
+    total_batches = len(loader) if max_batches is None else min(len(loader), max_batches)
+    for batch_idx, (hes, cd30, _) in enumerate(
+        tqdm(loader, desc="  valid", leave=False, total=total_batches)
+    ):
+        if max_batches is not None and batch_idx >= max_batches:
+            break
         hes, cd30 = hes.to(device), cd30.to(device)
         with _autocast_ctx(device, use_amp, amp_dtype):
             pred = model(hes)
@@ -248,6 +257,18 @@ def parse_args():
         default=1.0,
         help="Gradient clipping norm (<=0 disables)",
     )
+    p.add_argument(
+        "--max_train_batches",
+        type=int,
+        default=None,
+        help="Limit the number of training batches per epoch for quick tests",
+    )
+    p.add_argument(
+        "--max_valid_batches",
+        type=int,
+        default=None,
+        help="Limit the number of validation batches per epoch for quick tests",
+    )
 
     # Resume
     p.add_argument("--resume", default=None, help="Path to checkpoint to resume from")
@@ -307,6 +328,10 @@ def main():
         augment=False,
     )
     print(f"Train: {len(train_ds)} pairs | Valid: {len(valid_ds)} pairs")
+    if args.max_train_batches is not None or args.max_valid_batches is not None:
+        print(
+            f"Batch limits -- train: {args.max_train_batches} | valid: {args.max_valid_batches}"
+        )
 
     train_loader = DataLoader(
         train_ds,
@@ -381,9 +406,16 @@ def main():
             use_amp,
             amp_dtype,
             args.max_grad_norm,
+            args.max_train_batches,
         )
         val_loss, val_mse, val_ssim, val_skipped = validate(
-            model, valid_loader, criterion, device, use_amp, amp_dtype
+            model,
+            valid_loader,
+            criterion,
+            device,
+            use_amp,
+            amp_dtype,
+            args.max_valid_batches,
         )
         scheduler.step()
 
