@@ -102,15 +102,11 @@ class HOptimusLoRA(nn.Module):
     ):
         super().__init__()
 
-        # Load pre-trained encoder (requires HF token & model access)
+        # Load the pre-trained encoder at its native resolution so pretrained
+        # positional embeddings are restored instead of being reinitialized.
         config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
-        # Override image size to match checkpoint positional embeddings
-        for attr in ("image_size", "img_size", "input_size"):
-            if hasattr(config, attr):
-                setattr(config, attr, target_size)
         encoder = AutoModel.from_pretrained(
             model_name, config=config, trust_remote_code=True,
-            ignore_mismatched_sizes=True,
         )
 
         # Timm-backed models can enforce a fixed encoder input size (e.g. 518).
