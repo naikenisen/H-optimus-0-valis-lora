@@ -102,24 +102,23 @@ class HOptimusLoRA(nn.Module):
     ):
         super().__init__()
 
-        # Load the pre-trained encoder at its native resolution so pretrained
-        # positional embeddings are restored instead of being reinitialized.
+        # Force 224x224 encoder grid so pretrained pos_embed (16x16 tokens)
+        # matches the checkpoint during from_pretrained loading.
         config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
+        for size_attr in ("image_size", "img_size"):
+            if hasattr(config, size_attr):
+                setattr(config, size_attr, 224)
+
         encoder = AutoModel.from_pretrained(
             model_name, config=config, trust_remote_code=True,
         )
 
-        # Timm-backed models can enforce a fixed encoder input size (e.g. 518).
-        # Keep decoder/output size independent from encoder size.
-        self.encoder_input_size = None
+        # Keep encoder input at 224 regardless of decoder output size.
+        self.encoder_input_size = 224
         timm_model = getattr(encoder, "timm_model", None)
         patch_embed = getattr(timm_model, "patch_embed", None) if timm_model is not None else None
         if patch_embed is not None and hasattr(patch_embed, "img_size"):
-            img_size = patch_embed.img_size
-            if isinstance(img_size, tuple):
-                self.encoder_input_size = int(img_size[0])
-            else:
-                self.encoder_input_size = int(img_size)
+            patch_embed.img_size = (224, 224)
 
         # Store architecture constants before PEFT wrapping
         timm_model = getattr(encoder, "timm_model", None)
