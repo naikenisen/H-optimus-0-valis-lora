@@ -1,4 +1,5 @@
 import argparse
+import contextlib
 import os
 import random
 import time
@@ -28,6 +29,10 @@ def compute_ssim(
     window_size: int = 11,
     sigma: float = 1.5,
 ) -> torch.Tensor:
+    # Compute SSIM in fp32 for numerical stability under mixed precision.
+    pred = pred.float()
+    target = target.float()
+
     C1, C2 = 0.01 ** 2, 0.03 ** 2
     channels = pred.shape[1]
     kernel = _gaussian_kernel_2d(window_size, sigma, channels).to(
@@ -44,9 +49,13 @@ def compute_ssim(
     sigma2_sq = F.conv2d(target.pow(2), kernel, padding=pad, groups=channels) - mu2_sq
     sigma12 = F.conv2d(pred * target, kernel, padding=pad, groups=channels) - mu12
 
-    ssim_map = ((2 * mu12 + C1) * (2 * sigma12 + C2)) / (
-        (mu1_sq + mu2_sq + C1) * (sigma1_sq + sigma2_sq + C2)
-    )
+    sigma1_sq = sigma1_sq.clamp_min(0.0)
+    sigma2_sq = sigma2_sq.clamp_min(0.0)
+
+    numerator = (2 * mu12 + C1) * (2 * sigma12 + C2)
+    denominator = (mu1_sq + mu2_sq + C1) * (sigma1_sq + sigma2_sq + C2)
+    ssim_map = numerator / denominator.clamp_min(1e-6)
+    ssim_map = torch.nan_to_num(ssim_map, nan=0.0, posinf=0.0, neginf=0.0)
     return ssim_map.mean()
 
 
@@ -94,50 +103,112 @@ def load_checkpoint(path, model, optimizer=None, scaler=None, device="cpu"):
     return ckpt.get("epoch", 0), ckpt.get("val_loss", float("inf"))
 
 
-def train_one_epoch(model, loader, criterion, optimizer, scaler, device, use_amp):
+def _autocast_ctx(device: torch.device, use_amp: bool, amp_dtype: torch.dtype):
+    if device.type == "cuda":
+        return torch.amp.autocast(device_type="cuda", enabled=use_amp, dtype=amp_dtype)
+    return contextlib.nullcontext()
+
+
+def train_one_epoch(
+    model,
+    loader,
+    criterion,
+    optimizer,
+    scaler,
+    device,
+    use_amp,
+    amp_dtype,
+    max_grad_norm,
+):
     model.train()
     running_loss, running_mse, running_ssim = 0.0, 0.0, 0.0
+    seen_samples = 0
+    skipped_batches = 0
 
     pbar = tqdm(loader, desc="  train", leave=False)
     for hes, cd30, _ in pbar:
         hes, cd30 = hes.to(device), cd30.to(device)
 
         optimizer.zero_grad(set_to_none=True)
-        with torch.amp.autocast("cuda", enabled=use_amp):
+        with _autocast_ctx(device, use_amp, amp_dtype):
             pred = model(hes)
-            loss, mse_l, ssim_l = criterion(pred, cd30)
 
-        scaler.scale(loss).backward()
-        scaler.step(optimizer)
-        scaler.update()
+        if not torch.isfinite(pred).all():
+            skipped_batches += 1
+            continue
 
-        running_loss += loss.item() * hes.size(0)
-        running_mse += mse_l.item() * hes.size(0)
-        running_ssim += ssim_l.item() * hes.size(0)
+        with torch.amp.autocast(device_type=device.type, enabled=False):
+            loss, mse_l, ssim_l = criterion(pred.float(), cd30.float())
+
+        if not torch.isfinite(loss):
+            skipped_batches += 1
+            continue
+
+        if scaler.is_enabled():
+            scaler.scale(loss).backward()
+            if max_grad_norm > 0:
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            loss.backward()
+            if max_grad_norm > 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+            optimizer.step()
+
+        bs = hes.size(0)
+        seen_samples += bs
+        running_loss += loss.item() * bs
+        running_mse += mse_l.item() * bs
+        running_ssim += ssim_l.item() * bs
 
         pbar.set_postfix(loss=f"{loss.item():.4f}")
 
-    n = len(loader.dataset)
-    return running_loss / n, running_mse / n, running_ssim / n
+    if seen_samples == 0:
+        raise RuntimeError(
+            "All training batches were skipped because predictions/loss became non-finite. "
+            "Try disabling AMP or using --amp --amp_dtype bf16."
+        )
+    n = seen_samples
+    return running_loss / n, running_mse / n, running_ssim / n, skipped_batches
 
 
 @torch.no_grad()
-def validate(model, loader, criterion, device, use_amp):
+def validate(model, loader, criterion, device, use_amp, amp_dtype):
     model.eval()
     running_loss, running_mse, running_ssim = 0.0, 0.0, 0.0
+    seen_samples = 0
+    skipped_batches = 0
 
     for hes, cd30, _ in tqdm(loader, desc="  valid", leave=False):
         hes, cd30 = hes.to(device), cd30.to(device)
-        with torch.amp.autocast("cuda", enabled=use_amp):
+        with _autocast_ctx(device, use_amp, amp_dtype):
             pred = model(hes)
-            loss, mse_l, ssim_l = criterion(pred, cd30)
 
-        running_loss += loss.item() * hes.size(0)
-        running_mse += mse_l.item() * hes.size(0)
-        running_ssim += ssim_l.item() * hes.size(0)
+        if not torch.isfinite(pred).all():
+            skipped_batches += 1
+            continue
 
-    n = len(loader.dataset)
-    return running_loss / n, running_mse / n, running_ssim / n
+        with torch.amp.autocast(device_type=device.type, enabled=False):
+            loss, mse_l, ssim_l = criterion(pred.float(), cd30.float())
+
+        if not torch.isfinite(loss):
+            skipped_batches += 1
+            continue
+
+        bs = hes.size(0)
+        seen_samples += bs
+        running_loss += loss.item() * bs
+        running_mse += mse_l.item() * bs
+        running_ssim += ssim_l.item() * bs
+
+    if seen_samples == 0:
+        raise RuntimeError(
+            "All validation batches were skipped because predictions/loss became non-finite."
+        )
+    n = seen_samples
+    return running_loss / n, running_mse / n, running_ssim / n, skipped_batches
 
 
 def parse_args():
@@ -162,8 +233,21 @@ def parse_args():
     p.add_argument("--ssim_weight", type=float, default=1.0, help="Weight for SSIM loss")
     p.add_argument("--num_workers", type=int, default=4)
     p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--amp", action="store_true", default=True, help="Mixed precision")
+    p.add_argument("--amp", action="store_true", default=False, help="Mixed precision")
     p.add_argument("--no_amp", dest="amp", action="store_false")
+    p.add_argument(
+        "--amp_dtype",
+        type=str,
+        default="auto",
+        choices=["auto", "bf16", "fp16"],
+        help="AMP dtype on CUDA (auto prefers bf16 when available)",
+    )
+    p.add_argument(
+        "--max_grad_norm",
+        type=float,
+        default=1.0,
+        help="Gradient clipping norm (<=0 disables)",
+    )
 
     # Resume
     p.add_argument("--resume", default=None, help="Path to checkpoint to resume from")
@@ -178,7 +262,19 @@ def main():
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     use_amp = args.amp and device.type == "cuda"
-    print(f"Device: {device} | Mixed precision: {use_amp}")
+    amp_dtype = torch.float16
+    if device.type == "cuda":
+        if args.amp_dtype == "auto":
+            amp_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        elif args.amp_dtype == "bf16":
+            amp_dtype = torch.bfloat16
+        else:
+            amp_dtype = torch.float16
+    scaler_enabled = use_amp and device.type == "cuda" and amp_dtype == torch.float16
+    print(
+        f"Device: {device} | Mixed precision: {use_amp} | "
+        f"AMP dtype: {str(amp_dtype).replace('torch.', '')}"
+    )
 
     # --- Image processor (normalization values) ---------------------------
     try:
@@ -246,7 +342,7 @@ def main():
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=args.epochs
     )
-    scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
+    scaler = torch.amp.GradScaler("cuda", enabled=scaler_enabled)
 
     criterion = CombinedLoss(ssim_weight=args.ssim_weight).to(device)
 
@@ -275,11 +371,19 @@ def main():
         t0 = time.time()
         print(f"\nEpoch {epoch + 1}/{args.epochs}  (lr={scheduler.get_last_lr()[0]:.2e})")
 
-        train_loss, train_mse, train_ssim = train_one_epoch(
-            model, train_loader, criterion, optimizer, scaler, device, use_amp
+        train_loss, train_mse, train_ssim, train_skipped = train_one_epoch(
+            model,
+            train_loader,
+            criterion,
+            optimizer,
+            scaler,
+            device,
+            use_amp,
+            amp_dtype,
+            args.max_grad_norm,
         )
-        val_loss, val_mse, val_ssim = validate(
-            model, valid_loader, criterion, device, use_amp
+        val_loss, val_mse, val_ssim, val_skipped = validate(
+            model, valid_loader, criterion, device, use_amp, amp_dtype
         )
         scheduler.step()
 
@@ -289,6 +393,10 @@ def main():
             f"  valid -- loss: {val_loss:.5f}  mse: {val_mse:.5f}  ssim: {val_ssim:.5f}  "
             f"({elapsed:.0f}s)"
         )
+        if train_skipped or val_skipped:
+            print(
+                f"  skipped non-finite batches -- train: {train_skipped} | valid: {val_skipped}"
+            )
 
         # Save last checkpoint
         save_checkpoint(
