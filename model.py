@@ -161,10 +161,13 @@ class HOptimusLoRA(nn.Module):
         for size_attr in ("image_size", "img_size"):
             if hasattr(config, size_attr):
                 setattr(config, size_attr, 224)
-        # TimmWrapperModel passes img_size via timm_model_kwargs, not
-        # config.image_size — this is the override that actually matters.
-        if hasattr(config, "timm_model_kwargs") and isinstance(config.timm_model_kwargs, dict):
-            config.timm_model_kwargs["img_size"] = 224
+        # TimmWrapperModel forwards timm_model_kwargs to timm.create_model().
+        # The dict may not exist on the config — create it if needed.
+        if not hasattr(config, "timm_model_kwargs") or not isinstance(
+            getattr(config, "timm_model_kwargs", None), dict
+        ):
+            config.timm_model_kwargs = {}
+        config.timm_model_kwargs["img_size"] = 224
 
         encoder = AutoModel.from_pretrained(
             model_name, config=config, trust_remote_code=True,
