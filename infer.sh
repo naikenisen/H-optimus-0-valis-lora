@@ -15,7 +15,7 @@ export HF_TOKEN=$(cat ~/.hf_token)
 cd $WORKDIR/H-optimus-0-valis-lora
 
 python inference.py \
-	--checkpoint "checkpoints/last.pt" \
+	--checkpoint "checkpoints/best.pt" \
 	--input "dataset/test/HES" \
 	--output_dir "predictions" \
 	--no_amp

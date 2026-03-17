@@ -90,6 +90,13 @@ def main():
     # --- Load checkpoint config -------------------------------------------
     ckpt = torch.load(args.checkpoint, map_location=device, weights_only=True)
     config = ckpt.get("config", {})
+    val_loss = ckpt.get("val_loss", None)
+    if val_loss is not None and not np.isfinite(float(val_loss)):
+        raise RuntimeError(
+            f"Checkpoint invalide: val_loss={val_loss}. "
+            "Ce modèle a divergé (NaN/Inf) pendant l'entrainement. "
+            "Relance un entrainement stable et utilise le nouveau best.pt."
+        )
 
     model_name = config.get("model_name", args.model_name)
     image_size = args.image_size or config.get("image_size", 224)
